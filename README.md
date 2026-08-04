@@ -159,7 +159,7 @@ devteam-pro/
 
 ## 🖥️ 在线 Demo
 
-【部署后填入 Streamlit 链接】
+[https://devteam-pro-qgm8qyvucsy2hx59hx5sfi.streamlit.app](https://devteam-pro-qgm8qyvucsy2hx59hx5sfi.streamlit.app)
 
 ---
 
