@@ -1,0 +1,38 @@
+graph TB
+    subgraph UI["🖥️ 用户界面"]
+        Streamlit["Streamlit 可视化面板"]
+    end
+
+    subgraph Pipeline["DevTeam Pipeline - 手写 DAG 调度"]
+        PM["PM Agent<br/>需求分析"]
+        Dev["Developer Agent<br/>代码生成"]
+        Review["Reviewer Agent<br/>代码审查"]
+        QA["QA Agent<br/>测试生成"]
+        FixLoop["Auto-Fix Loop<br/>最多 3 轮修复"]
+        Sandbox["Sandbox Executor<br/>isolated subprocess + venv"]
+
+        PM --> Dev
+        Dev --> Review
+        Review --> QA
+        QA --> Sandbox
+        Sandbox -->|失败| FixLoop
+        FixLoop -->|错误上下文回传| Dev
+        Sandbox -->|通过| Output["最终产物<br/>可运行代码 + 测试"]
+    end
+
+    subgraph LLM["LLM Provider 适配层"]
+        OpenAI["OpenAI<br/>gpt-4o"]
+        DeepSeek["DeepSeek<br/>deepseek-chat"]
+        Qwen["Qwen<br/>qwen-turbo"]
+    end
+
+    Streamlit --> PM
+    Dev -.-> OpenAI
+    Dev -.-> DeepSeek
+    Dev -.-> Qwen
+
+    style PM fill:#4a90d9,color:#fff
+    style Dev fill:#34a853,color:#fff
+    style Review fill:#f5a623,color:#fff
+    style QA fill:#9b59b6,color:#fff
+    style Sandbox fill:#e74c3c,color:#fff

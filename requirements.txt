@@ -1,0 +1,22 @@
+# DevTeam Pro — Python Dependencies
+# Python 3.10+ required
+
+# ── Core ──────────────────────────────────────────
+pydantic>=2.0.0
+httpx>=0.25.0
+python-dotenv>=1.0.0
+
+# ── Streamlit Dashboard ───────────────────────────
+streamlit>=1.28.0
+
+# ── Static Analysis (Sandbox) ─────────────────────
+flake8>=6.0.0
+pylint>=3.0.0
+
+# ── Testing (Sandbox) ─────────────────────────────
+pytest>=7.4.0
+pytest-timeout>=2.1.0
+
+# ── Optional: YAML/TOML config support ────────────
+pyyaml>=6.0
+tomli>=2.0.0; python_version < "3.11"
