@@ -155,19 +155,6 @@ if run_btn and requirement.strip():
         run_pipeline_sync(requirement.strip())
     st.rerun()
 
-# ── 状态展示 ────────────────────────────────────────────────
-
-state: TaskState | None = st.session_state.get("current_state")
-
-if state is not None:
-    _show_pipeline_status(state)
-    _show_agent_outputs(state)
-    _show_sandbox_results(state)
-    _show_generated_code(state)
-elif selected_task != "(none)" and "replay_task_id" in st.session_state:
-    _show_replay(st.session_state["replay_task_id"])
-
-
 # ── 辅助渲染函数 ────────────────────────────────────────────
 
 def _show_pipeline_status(state: TaskState) -> None:
@@ -359,6 +346,19 @@ def _format_time(stage: Any) -> str:
         dur = (stage.finished_at - stage.started_at).total_seconds()
         return f"{dur:.1f}s"
     return ""
+
+
+# ── 状态展示（必须在所有辅助函数定义之后调用，否则 NameError） ──
+
+state: TaskState | None = st.session_state.get("current_state")
+
+if state is not None:
+    _show_pipeline_status(state)
+    _show_agent_outputs(state)
+    _show_sandbox_results(state)
+    _show_generated_code(state)
+elif selected_task != "(none)" and "replay_task_id" in st.session_state:
+    _show_replay(st.session_state["replay_task_id"])
 
 
 # ── Footer ──────────────────────────────────────────────────
