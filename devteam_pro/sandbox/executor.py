@@ -334,7 +334,6 @@ class SandboxExecutor:
                     str(pytest_path),
                     "-v",
                     "--tb=short",
-                    "--timeout=30",
                     str(project_dir),
                 ],
                 capture_output=True, text=True,
