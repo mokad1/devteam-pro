@@ -117,23 +117,30 @@ class Evaluator:
         provider = get_provider()
         self.pipeline = DevTeamPipeline(provider)
 
-    async def run_full_evaluation(self) -> EvalReport:
-        """运行完整评测（多 Agent 流水线）。"""
+    async def run_full_evaluation(
+        self, cases: list[TestCase] | None = None,
+    ) -> EvalReport:
+        """运行完整评测（多 Agent 流水线）。
+
+        Args:
+            cases: 要评测的用例子集，默认跑全部 TEST_CASES。
+        """
+        cases = cases or TEST_CASES
         cfg = get_config()
         report = EvalReport(
             provider=cfg.llm_provider,
             model=cfg.default_model or "(default)",
-            total_cases=len(TEST_CASES),
+            total_cases=len(cases),
         )
 
         print(f"\n{'='*70}")
         print(f"DevTeam Pro Evaluation — {report.timestamp}")
         print(f"Provider: {report.provider} | Model: {report.model}")
-        print(f"Test Cases: {len(TEST_CASES)}")
+        print(f"Test Cases: {len(cases)}")
         print(f"{'='*70}\n")
 
-        for i, tc in enumerate(TEST_CASES):
-            print(f"[{i+1}/{len(TEST_CASES)}] Testing: {tc['id']} ({tc['difficulty']})...", end=" ")
+        for i, tc in enumerate(cases):
+            print(f"[{i+1}/{len(cases)}] Testing: {tc['id']} ({tc['difficulty']})...", end=" ")
             start = time.monotonic()
 
             try:
@@ -166,7 +173,9 @@ class Evaluator:
         self._compute_metrics(report)
         return report
 
-    async def run_single_agent_baseline(self) -> EvalReport:
+    async def run_single_agent_baseline(
+        self, cases: list[TestCase] | None = None,
+    ) -> EvalReport:
         """运行单 Agent 基线测试。
 
         单 Agent 基线 = 只有 Developer Agent（无 PM/Reviewer/QA/Sandbox/Fix Loop）。
@@ -175,34 +184,31 @@ class Evaluator:
         from devteam_pro.llm.base import BaseProvider
         from devteam_pro.models.messages import PMOutput
 
+        cases = cases or TEST_CASES
         cfg = get_config()
         provider = get_provider()
         report = EvalReport(
             provider=f"{cfg.llm_provider}_baseline",
             model=cfg.default_model or "(default)",
-            total_cases=len(TEST_CASES),
+            total_cases=len(cases),
         )
 
         print(f"\n{'='*70}")
         print(f"Single-Agent Baseline Evaluation")
         print(f"{'='*70}\n")
 
-        for i, tc in enumerate(TEST_CASES):
-            print(f"[{i+1}/{len(TEST_CASES)}] Baseline: {tc['id']}...", end=" ")
+        for i, tc in enumerate(cases):
+            print(f"[{i+1}/{len(cases)}] Baseline: {tc['id']}...", end=" ")
             start = time.monotonic()
 
             try:
                 # 单 Agent 模式：直接让 Developer 从需求生成代码
                 result = await self._run_single_agent(provider, tc)
                 elapsed = time.monotonic() - start
-
-                # 对生成的代码做基本的语法检查
-                syntax_ok, syntax_total = self._check_syntax_only(result)
-                result.syntax_pass_count = syntax_ok
-                result.syntax_total_count = syntax_total
                 result.duration_seconds = elapsed
 
-                print(f"✅ ({elapsed:.1f}s, {syntax_ok}/{syntax_total} syntax)")
+                print(f"✅ ({elapsed:.1f}s, {result.syntax_pass_count}/{result.syntax_total_count} syntax, "
+                      f"passed={result.sandbox_passed})")
 
             except Exception as e:
                 elapsed = time.monotonic() - start
@@ -265,7 +271,15 @@ class Evaluator:
     async def _run_single_agent(
         self, provider: BaseProvider, tc: TestCase,
     ) -> SingleResult:
-        """单 Agent 基线：直接调用 Developer 风格的 prompt。"""
+        """单 Agent 基线：Developer 生成代码 → 直接进沙箱执行。
+
+        无 PM/Reviewer/QA，也没有修复循环。首轮沙箱结果即最终结果，
+        用于对比多 Agent 流水线的提升。沙箱无 QA 测试文件，只看语法
+        与入口脚本能否跑通。
+        """
+        from devteam_pro.models.messages import DevOutput
+        from devteam_pro.sandbox.executor import SandboxExecutor
+
         prompt = (
             f"Write a complete Python project based on this requirement:\n\n"
             f"{tc['requirement']}\n\n"
@@ -291,18 +305,40 @@ class Evaluator:
             raw = raw[:-3]
 
         data = json.loads(raw.strip())
+        dev_output = DevOutput.model_validate(data)
+
+        # 语法统计：直接对源码文本做 ast.parse，不依赖文件落盘
+        syntax_ok = 0
+        syntax_total = 0
+        for f in dev_output.files:
+            if not f.path.endswith(".py"):
+                continue
+            syntax_total += 1
+            try:
+                ast.parse(f.content, filename=f.path)
+                syntax_ok += 1
+            except SyntaxError:
+                pass
+
+        # 进沙箱执行（无 QA 测试）
+        executor = SandboxExecutor()
+        task_id = f"baseline_{tc['id']}"
+        sandbox_result = await executor.execute(
+            dev_output, qa_output=None, task_id=task_id,
+        )
+
         return SingleResult(
             case_id=tc["id"],
             category=tc["category"],
             difficulty=tc["difficulty"],
             requirement=tc["requirement"],
-            status="completed",
+            status="completed" if sandbox_result.passed else "failed",
+            syntax_pass_count=syntax_ok,
+            syntax_total_count=max(syntax_total, 1),
+            sandbox_passed=sandbox_result.passed,
+            fix_rounds_used=0,
+            error_message=sandbox_result.error_summary,
         )
-
-    def _check_syntax_only(self, result: SingleResult) -> tuple[int, int]:
-        """仅检查语法（用于基线测试中。基线不写文件到磁盘，这里直接返回占位值）。"""
-        # 基线测试不实际写文件，标记为待检查
-        return (0, 0)
 
     # ── 指标计算 ──────────────────────────────────────────
 
@@ -506,9 +542,9 @@ def _calc_first_run_improvement(multi: EvalReport, baseline: EvalReport) -> floa
         if r.fix_rounds_used == 0 and r.sandbox_passed
     ) / max(len(multi.results), 1) * 100
 
-    # 基线首次成功：baseline 没有 fix loop，全部视为首次
+    # 基线首次成功：baseline 没有 fix loop，首轮沙箱通过即首次成功
     base_first = sum(
-        1 for r in baseline.results if r.status == "completed"
+        1 for r in baseline.results if r.sandbox_passed
     ) / max(len(baseline.results), 1) * 100
 
     if base_first == 0:
@@ -616,12 +652,12 @@ async def main() -> None:
     print(f"Running {len(cases)} test cases...")
 
     # 运行多 Agent 评测
-    report = await evaluator.run_full_evaluation()
+    report = await evaluator.run_full_evaluation(cases=cases)
 
     # 运行单 Agent 基线
     baseline = None
     if args.baseline:
-        baseline = await evaluator.run_single_agent_baseline()
+        baseline = await evaluator.run_single_agent_baseline(cases=cases)
 
     # 打印报告
     print_report(report, baseline)
